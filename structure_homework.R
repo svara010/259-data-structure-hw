@@ -39,7 +39,15 @@ load("rs_data.RData")
 
 #ANSWER
 
+rs_joined_orig <- full_join(rs_new, rs_old, by = c("Artist", "Song"))
 
+nrow(rs_joined_orig)
+
+View(rs_joined_orig)
+
+# some songs have NA values for Rank.y and Year.y, which means that they exist in the new list but not in the old list.
+# also, some songs have with NA values for Rank.x and Year.x, meaning they exist in the old list but not in the new list.
+# It is because of spelling differences and extra spaces or special characters (e.g., "Guns N’ Roses" vs. "Guns N Roses").
 
 ### Question 2 ---------- 
 
@@ -50,6 +58,21 @@ load("rs_data.RData")
 # Make Rank and Year into integer variables for rs_old before binding them into rs_all
 
 #ANSWER
+
+rs_new <- rs_new %>%
+  mutate(Source = "New")
+
+rs_old <- rs_old %>%
+  mutate(Source = "Old")
+
+rs_old <- rs_old %>%
+  mutate(Rank = as.integer(Rank), 
+         Year = as.integer(Year))
+
+rs_all <- bind_rows(rs_new, rs_old)
+
+glimpse(rs_all)  
+table(rs_all$Source) # just to make sure
 
 
 ### Question 3 ----------
@@ -64,6 +87,23 @@ load("rs_data.RData")
 #ANSWER
 
 
+rs_all <- rs_all %>%
+  mutate(
+    Artist = str_remove_all(Artist, "\\bThe\\b"),  
+    Artist = str_replace_all(Artist, "&", "and"),  
+    Artist = str_remove_all(Artist, "[[:punct:]]"), 
+    Artist = str_to_lower(str_trim(Artist)),
+    
+    Song = str_remove_all(Song, "\\bThe\\b"),  
+    Song = str_replace_all(Song, "&", "and"),  
+    Song = str_remove_all(Song, "[[:punct:]]"),  
+    Song = str_to_lower(str_trim(Song))
+  )
+
+glimpse(rs_all)  
+View(rs_all) #it worked!
+
+
 ### Question 4 ----------
 
 # Now that the data have been cleaned, split rs_all into two datasets, one for old and one for new
@@ -75,6 +115,18 @@ load("rs_data.RData")
 # in the new rs_joined compared to the original. Use nrow to check (there should be 799 rows)
 
 #ANSWER
+
+rs_old_clean <- rs_all %>%
+  filter(Source == "Old") %>%
+  select(-Source)
+
+rs_new_clean <- rs_all %>%
+  filter(Source == "New") %>%
+  select(-Source)
+
+rs_joined <- full_join(rs_old_clean, rs_new_clean, by = c("Artist", "Song"), suffix = c("_Old", "_New"))
+
+nrow(rs_joined)  # it did improve matches!!
 
 
 ### Question 5 ----------
@@ -89,6 +141,11 @@ load("rs_data.RData")
 
 #ANSWER
 
+rs_joined <- rs_joined %>%
+  filter(!is.na(Rank_New) & !is.na(Rank_Old)) %>%  
+  mutate(Rank_Change = Rank_Old - Rank_New) %>%  
+  arrange(desc(Rank_Change))
+
 
 ### Question 6 ----------
 
@@ -100,6 +157,15 @@ load("rs_data.RData")
 
 #ANSWER
 
+rs_joined <- rs_joined %>%
+  mutate(Decade = factor(paste0(floor(Year_Old / 10) * 10, "s"))) 
+
+rs_joined %>%
+  group_by(Decade) %>%
+  summarize(mean_rank_change = mean(Rank_Change, na.rm = TRUE)) %>%
+  arrange(desc(mean_rank_change))  
+# the 1990s had the biggest improvement.
+# the 1950s saw the biggest drop (older songs ranked lower in the new list).
 
 
 ### Question 7 ----------
@@ -111,7 +177,16 @@ load("rs_data.RData")
 
 #ANSWER
 
+#rs_joined %>%
+  #fct_count(Decade) # I got an error saying fct_count() expects a factor or character vector, but we're passing a tibble, so I used count() instead of fct_count().
 
+rs_joined %>%
+  count(Decade) 
+
+rs_joined <- rs_joined %>%
+  mutate(Decade_Lumped = fct_lump(as_factor(Decade), n = 3))
+
+fct_count(rs_joined$Decade_Lumped, prop = TRUE)
 
 ### Question 8 ---------- 
 
@@ -121,6 +196,11 @@ load("rs_data.RData")
 
 #ANSWER
 
+top20 <- read_csv("top_20.csv")
+
+top20 <- top20 %>%
+  mutate(Release_Date = parse_date_time(Release, orders = c("Y-m-d", "m/d/Y", "d/m/Y")))
+
 
 ### Question 9 --------
 
@@ -129,6 +209,9 @@ load("rs_data.RData")
 # overwrite top20 with the pivoted data (there should now be 20 rows!)
 
 #ANSWER
+
+top20 <- top20 %>%
+  pivot_wider(names_from = Style, values_from = Value)
 
 
 
@@ -144,7 +227,23 @@ load("rs_data.RData")
 
 #ANSWER
 
+top20 <- top20 %>%
+  left_join(rs_joined, by = c("Artist", "Song"))
 
+top20 <- top20 %>%
+  mutate(Release_Month = month(Release_Date, label = TRUE, abbr = FALSE)) 
+
+top20 <- top20 %>%
+  mutate(Season = case_when(
+    Release_Month %in% c("December", "January", "February") ~ "Winter",
+    Release_Month %in% c("March", "April", "May") ~ "Spring",
+    Release_Month %in% c("June", "July", "August") ~ "Summer",
+    Release_Month %in% c("September", "October", "November") ~ "Fall"
+  ) %>%
+    factor(levels = c("Winter", "Spring", "Summer", "Fall")))  # just to make sure seasons appear in logical orders.
+
+top20 %>%
+  count(Season)
 
 ### Question 11 ---------
 
@@ -154,6 +253,20 @@ load("rs_data.RData")
 # Figure out which is the top-ranked song (from Rank_New) that used a minor key
 
 #ANSWER
+
+top20 <- top20 %>%
+  mutate(Quality = if_else(str_detect(Key, "m"), "Minor", "Major") %>%
+           factor(levels = c("Major", "Minor"))) # i wanna make sure major comes first when summerizing 
+
+top20 %>%
+  count(Quality)
+
+top20 %>%
+  filter(Quality == "Minor") %>%
+  arrange(Rank_New) %>%
+  slice(1) %>%
+  select(Song, Artist, Rank_New, Key)
+# god only knows beach boys is the top-ranked song (from Rank_New) that used a minor key!
 
 
 
